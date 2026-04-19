@@ -78,31 +78,70 @@ def _som_arpejo(notas, dur_nota, volume=0.35):
 
 
 def _som_musica_loop(volume=0.18):
-    # Melodia retrô em lá menor
-    bpm   = 140
-    beat  = 60 / bpm
-    seq   = [
-        (220, beat/2), (0, beat/4), (262, beat/2), (330, beat/2),
-        (294, beat/2), (0, beat/4), (220, beat),
-        (196, beat/2), (0, beat/4), (220, beat/2), (262, beat/2),
-        (247, beat/2), (0, beat/4), (196, beat),
+    """Chiptune 8-bit: onda quadrada com melodia, harmonia e baixo pulsante."""
+    bpm  = 150
+    beat = 60 / bpm
+    h    = beat / 2
+    q    = beat / 4
+
+    def sq(freq, t):
+        return 1.0 if (freq * t) % 1 < 0.5 else -1.0
+
+    mel = [
+        (659, q), (784, q), (880, h), (784, q), (659, q),
+        (523, h), (0, h),
+        (587, q), (659, q), (784, h), (659, q), (587, q),
+        (523, beat), (0, beat),
+        (880, q), (988, q), (1047, h), (880, q), (784, q),
+        (659, h), (523, h),
+        (784, q), (659, q), (587, q), (523, q),
+        (659, beat), (0, beat),
     ]
-    total = int(sum(d for _, d in seq) * SR)
-    buf   = array.array('h', [0] * (total * 2))
-    pos   = 0
-    for freq, dur in seq:
-        n = int(dur * SR)
-        for i in range(n):
-            if freq > 0:
+    harm = [
+        (523, q), (659, q), (784, h), (659, q), (523, q),
+        (392, h), (0, h),
+        (494, q), (523, q), (659, h), (523, q), (494, q),
+        (392, beat), (0, beat),
+        (784, q), (880, q), (988, h), (784, q), (659, q),
+        (523, h), (392, h),
+        (659, q), (523, q), (494, q), (392, q),
+        (523, beat), (0, beat),
+    ]
+    bass_notas = [131, 131, 165, 165, 131, 131, 196, 196,
+                  131, 131, 165, 165, 131, 131, 131, 131]
+    bass_dur   = h
+
+    total_mel  = sum(d for _, d in mel)
+    total_bass = bass_dur * len(bass_notas)
+    total      = max(total_mel, total_bass)
+    n          = int(total * SR)
+    buf        = array.array('h', [0] * (n * 2))
+
+    for track, vol_mul in [(mel, 0.55), (harm, 0.35)]:
+        pos = 0
+        for freq, dur in track:
+            samp = int(dur * SR)
+            for i in range(samp):
+                if freq > 0 and pos + i < n:
+                    t   = i / SR
+                    env = math.exp(-1.0 * t / dur)
+                    v   = int(32767 * volume * vol_mul * env * sq(freq, t))
+                    buf[2*(pos+i)]   = max(-32767, min(32767, buf[2*(pos+i)]   + v))
+                    buf[2*(pos+i)+1] = max(-32767, min(32767, buf[2*(pos+i)+1] + v))
+            pos += samp
+
+    pos = 0
+    for freq in bass_notas:
+        samp = int(bass_dur * SR)
+        for i in range(samp):
+            if pos + i < n:
                 t   = i / SR
-                env = 1.0 - i / n
-                val = int(32767 * volume * env * math.sin(2 * math.pi * freq * t))
-            else:
-                val = 0
-            if pos + i < total:
-                buf[2*(pos+i)]   = val
-                buf[2*(pos+i)+1] = val
-        pos += n
+                env = 0.4 + 0.6 * math.exp(-6 * t / bass_dur)
+                v   = int(32767 * volume * 0.45 * env * sq(freq, t))
+                buf[2*(pos+i)]   = max(-32767, min(32767, buf[2*(pos+i)]   + v))
+                buf[2*(pos+i)+1] = max(-32767, min(32767, buf[2*(pos+i)+1] + v))
+        pos += samp
+
     return pygame.mixer.Sound(buffer=buf)
 
 

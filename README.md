@@ -14,6 +14,7 @@ Jogo da cobra com visual estilo terminal verde fósforo — scanlines, grade esc
 - **Progressão de velocidade** por nível
 - **Highscore** salvo em `highscore.json`
 - **Painel inferior** com pontos, recorde e nível
+- **Sons 8-bit** gerados por código — música chiptune, blip, nível e morte
 
 ## Controles
 
@@ -34,7 +35,7 @@ pip install pygame
 ## Como jogar
 
 ```bash
-python jogo-da-cobrinha.py
+python jogo.py
 ```
 
 ## Desenvolvido por
