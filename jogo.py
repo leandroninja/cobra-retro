@@ -3,6 +3,7 @@ import sys
 import json
 import math
 import random
+import array
 from collections import deque
 from dataclasses import dataclass
 
@@ -34,6 +35,75 @@ SPEED_MAX     = 20
 SCORE_FILE    = "highscore.json"
 
 MENU, PLAYING, PAUSED, GAME_OVER = range(4)
+SR = 44100  # sample rate
+
+
+# ── Sons gerados por código ───────────────────────────────────────────────────
+def _som_quadrado(freq, duracao, volume=0.3):
+    n = int(SR * duracao)
+    buf = array.array('h', [0] * (n * 2))
+    period = SR / freq
+    for i in range(n):
+        val = int(32767 * volume * (1 if (i % period) < (period / 2) else -1))
+        buf[2*i] = val
+        buf[2*i+1] = val
+    return pygame.mixer.Sound(buffer=buf)
+
+
+def _som_sweep(f0, f1, duracao, volume=0.4):
+    n = int(SR * duracao)
+    buf = array.array('h', [0] * (n * 2))
+    for i in range(n):
+        t = i / SR
+        freq = f0 + (f1 - f0) * (i / n)
+        val = int(32767 * volume * math.sin(2 * math.pi * freq * t))
+        buf[2*i] = val
+        buf[2*i+1] = val
+    return pygame.mixer.Sound(buffer=buf)
+
+
+def _som_arpejo(notas, dur_nota, volume=0.35):
+    n_total = int(SR * dur_nota * len(notas))
+    buf = array.array('h', [0] * (n_total * 2))
+    for idx, freq in enumerate(notas):
+        inicio = int(idx * SR * dur_nota)
+        fim    = int((idx + 1) * SR * dur_nota)
+        for i in range(inicio, fim):
+            t   = (i - inicio) / SR
+            env = 1.0 - (i - inicio) / (fim - inicio)
+            val = int(32767 * volume * env * math.sin(2 * math.pi * freq * t))
+            buf[2*i] = val
+            buf[2*i+1] = val
+    return pygame.mixer.Sound(buffer=buf)
+
+
+def _som_musica_loop(volume=0.18):
+    # Melodia retrô em lá menor
+    bpm   = 140
+    beat  = 60 / bpm
+    seq   = [
+        (220, beat/2), (0, beat/4), (262, beat/2), (330, beat/2),
+        (294, beat/2), (0, beat/4), (220, beat),
+        (196, beat/2), (0, beat/4), (220, beat/2), (262, beat/2),
+        (247, beat/2), (0, beat/4), (196, beat),
+    ]
+    total = int(sum(d for _, d in seq) * SR)
+    buf   = array.array('h', [0] * (total * 2))
+    pos   = 0
+    for freq, dur in seq:
+        n = int(dur * SR)
+        for i in range(n):
+            if freq > 0:
+                t   = i / SR
+                env = 1.0 - i / n
+                val = int(32767 * volume * env * math.sin(2 * math.pi * freq * t))
+            else:
+                val = 0
+            if pos + i < total:
+                buf[2*(pos+i)]   = val
+                buf[2*(pos+i)+1] = val
+        pos += n
+    return pygame.mixer.Sound(buffer=buf)
 
 
 # ── Utilidades ────────────────────────────────────────────────────────────────
@@ -160,11 +230,28 @@ class Game:
         )
         self.clock     = pygame.time.Clock()
         self.highscore = load_highscore()
+        self._init_audio()
         self._build_bg()
         self._init_menu_snake()
         self.scanline_surf = self._make_scanlines()
         self.state = MENU
         self._new_game()
+
+    def _init_audio(self):
+        try:
+            pygame.mixer.init(frequency=SR, size=-16, channels=2, buffer=512)
+            self.sfx_comer   = _som_quadrado(880, 0.07, 0.35)
+            self.sfx_nivel   = _som_arpejo([330, 392, 494, 659], 0.09, 0.35)
+            self.sfx_morte   = _som_sweep(400, 60, 0.5, 0.45)
+            self.sfx_inicio  = _som_arpejo([262, 330, 392, 523], 0.08, 0.3)
+            self.musica      = _som_musica_loop(0.18)
+            self.musica.play(-1)
+        except Exception:
+            self.sfx_comer = self.sfx_nivel = self.sfx_morte = self.sfx_inicio = self.musica = None
+
+    def _play(self, sfx):
+        if sfx:
+            sfx.play()
 
     def _build_bg(self):
         self.bg_surf = pygame.Surface((SCREEN_W, ROWS*CELL))
@@ -226,13 +313,13 @@ class Game:
                 if k == pygame.K_ESCAPE:
                     save_highscore(self.highscore); pygame.quit(); sys.exit()
                 if self.state == MENU and k == pygame.K_RETURN:
-                    self._new_game(); self.state = PLAYING
+                    self._new_game(); self.state = PLAYING; self._play(self.sfx_inicio)
                 elif self.state == PLAYING and k == pygame.K_p:
                     self.state = PAUSED
                 elif self.state == PAUSED and k == pygame.K_p:
                     self.state = PLAYING
                 elif self.state == GAME_OVER and k == pygame.K_RETURN:
-                    self._new_game(); self.state = PLAYING
+                    self._new_game(); self.state = PLAYING; self._play(self.sfx_inicio)
                 if self.state == PLAYING and k in DIR_KEYS:
                     nd = DIR_KEYS[k]
                     if nd[0]+self.direction[0] != 0 or nd[1]+self.direction[1] != 0:
@@ -282,13 +369,18 @@ class Game:
         self.snake.appendleft((nx, ny))
 
         if (nx, ny) == self.food.pos:
-            self.score += 1
-            self.level   = self.score // 5 + 1
-            self.speed   = min(SPEED_INIT + self.level - 1, SPEED_MAX)
+            nivel_antes   = self.level
+            self.score   += 1
+            self.level    = self.score // 5 + 1
+            self.speed    = min(SPEED_INIT + self.level - 1, SPEED_MAX)
             if self.score > self.highscore:
                 self.highscore = self.score
             spawn_particles(self.particles, nx, ny, FOOD_C)
             self.food.respawn(set(self.snake))
+            if self.level > nivel_antes:
+                self._play(self.sfx_nivel)
+            else:
+                self._play(self.sfx_comer)
         else:
             self.snake.pop()
 
@@ -298,6 +390,7 @@ class Game:
         if self.score > self.highscore:
             self.highscore = self.score
             save_highscore(self.highscore)
+        self._play(self.sfx_morte)
         self.state = GAME_OVER
 
     def _draw(self):
